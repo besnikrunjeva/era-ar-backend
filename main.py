@@ -18,13 +18,24 @@ app.add_middleware(
     allow_origins=[
         "https://besnikrunjeva.github.io",
         "http://localhost:5173",
+        "https://localhost:5173",
+        "http://192.168.178.163:5173",
+        "https://192.168.178.163:5173",
         "http://192.168.178.73:5173",
+        "https://192.168.178.73:5173",
     ],
     allow_methods=["POST", "OPTIONS"],
     allow_headers=["*"],
 )
 
-VALID_SIZES = {"3.5oz", "7oz", "12oz"}
+# Maps model_id → usdz filename in models/
+VALID_MODELS = {
+    "3.5oz":    "gota-3.5oz.usdz",
+    "7oz":      "gota-7oz.usdz",
+    "12oz":     "gota-12oz.usdz",
+    "mbajtese": "mbajtese.usdz",
+}
+
 USDZ_ALIGN = 64
 
 
@@ -37,7 +48,6 @@ def pack_usdz(files: list[tuple[str, bytes]]) -> bytes:
         name_b = name.encode("utf-8")
         crc = zlib.crc32(data) & 0xFFFFFFFF
 
-        # Pad extra field so data starts on a 64-byte boundary
         base = buf.tell() + 30 + len(name_b)
         extra_len = (USDZ_ALIGN - base % USDZ_ALIGN) % USDZ_ALIGN
         extra = b"\x00" * extra_len
@@ -103,36 +113,36 @@ def health():
 @app.post("/generate-ar")
 async def generate_ar(
     canvas: UploadFile = File(...),
-    size: str = Form(...),
+    size: str = Form(None),    # gota: "3.5oz" / "7oz" / "12oz"
+    model: str = Form(None),   # other products: "mbajtese"
 ):
-    if size not in VALID_SIZES:
-        raise HTTPException(400, f"Invalid size '{size}'. Must be one of {VALID_SIZES}")
+    # Resolve model_id from whichever field was sent
+    model_id = model or size
+    if not model_id or model_id not in VALID_MODELS:
+        raise HTTPException(400, f"Unknown model '{model_id}'. Valid: {list(VALID_MODELS)}")
 
-    # Read the composited canvas PNG sent from the frontend
     canvas_bytes = await canvas.read()
 
-    # Validate it's a real image
     try:
         img = Image.open(io.BytesIO(canvas_bytes))
         img.verify()
     except Exception:
         raise HTTPException(400, "Invalid image data")
 
-    # Ensure PNG format (re-encode if needed)
     img = Image.open(io.BytesIO(canvas_bytes)).convert("RGB")
     png_buf = io.BytesIO()
     img.save(png_buf, "PNG")
     png_bytes = png_buf.getvalue()
 
-    # Swap texture in base USDZ
-    usdz_path = BASE_DIR / "models" / f"gota-{size}.usdz"
+    usdz_path = BASE_DIR / "models" / VALID_MODELS[model_id]
     try:
         result = swap_usdz_texture(usdz_path, png_bytes)
     except Exception as e:
         raise HTTPException(500, str(e))
 
+    filename = f"{model_id}-branded.usdz"
     return Response(
         content=result,
         media_type="model/vnd.usdz+zip",
-        headers={"Content-Disposition": f'attachment; filename="gota-{size}-branded.usdz"'},
+        headers={"Content-Disposition": f'attachment; filename="{filename}"'},
     )
