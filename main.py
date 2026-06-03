@@ -36,6 +36,7 @@ VALID_MODELS = {
     "mbajtese":   "mbajtese.usdz",
     "akullore-s": "akullore-s.usdz",
     "akullore-m": "akullore-m.usdz",
+    "kupa-supe":  "kupa-supe.usdz",
 }
 
 USDZ_ALIGN = 64
@@ -89,21 +90,32 @@ def pack_usdz(files: list[tuple[str, bytes]]) -> bytes:
 
 
 def swap_usdz_texture(usdz_path: Path, new_png: bytes) -> bytes:
-    """Replace the placeholder texture inside a USDZ with new_png."""
+    """Replace the placeholder texture inside a USDZ with new_png.
+
+    Prefers textures/placeholder_*.png so models with multiple textures
+    (e.g. kraft photo + design slot) never replace the wrong one.
+    Falls back to the first PNG if no placeholder name is found.
+    """
     with zipfile.ZipFile(usdz_path, "r") as zf:
         names = zf.namelist()
-        files = []
-        replaced = False
-        for name in names:
-            if not replaced and name.startswith("textures/") and name.endswith(".png"):
-                files.append((name, new_png))
-                replaced = True
-            else:
-                files.append((name, zf.read(name)))
+        raw   = {n: zf.read(n) for n in names}
 
-    if not replaced:
+    # Pass 1: prefer explicit placeholder name
+    target = next(
+        (n for n in names if n.startswith("textures/placeholder") and n.endswith(".png")),
+        None,
+    )
+    # Pass 2: fallback to first PNG
+    if target is None:
+        target = next(
+            (n for n in names if n.startswith("textures/") and n.endswith(".png")),
+            None,
+        )
+
+    if target is None:
         raise ValueError(f"No texture slot found in {usdz_path.name}")
 
+    files = [(n, new_png if n == target else raw[n]) for n in names]
     return pack_usdz(files)
 
 
