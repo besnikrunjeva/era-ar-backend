@@ -30,13 +30,14 @@ app.add_middleware(
 
 # Maps model_id → usdz filename in models/
 VALID_MODELS = {
-    "3.5oz":      "gota-3.5oz.usdz",
-    "7oz":        "gota-7oz.usdz",
-    "12oz":       "gota-12oz.usdz",
-    "mbajtese":   "mbajtese.usdz",
-    "akullore-s": "akullore-s.usdz",
-    "akullore-m": "akullore-m.usdz",
-    "kupa-supe":  "kupa-supe.usdz",
+    "3.5oz":           "gota-3.5oz.usdz",
+    "7oz":             "gota-7oz.usdz",
+    "12oz":            "gota-12oz.usdz",
+    "mbajtese":        "mbajtese.usdz",
+    "akullore-s":      "akullore-s.usdz",
+    "akullore-m":      "akullore-m.usdz",
+    "kupa-supe":       "kupa-supe.usdz",
+    "leter-tavoline":  "leter-tavoline.usdz",
 }
 
 USDZ_ALIGN = 64
