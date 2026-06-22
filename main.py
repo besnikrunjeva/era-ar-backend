@@ -27,6 +27,7 @@ app.add_middleware(
         "http://192.168.178.73:5173",
         "https://192.168.178.73:5173",
     ],
+    allow_origin_regex=r"https://.*\.vercel\.app",
     allow_methods=["POST", "OPTIONS"],
     allow_headers=["*"],
 )
