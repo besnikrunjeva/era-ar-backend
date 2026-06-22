@@ -17,6 +17,9 @@ app.add_middleware(
     CORSMiddleware,
     allow_origins=[
         "https://besnikrunjeva.github.io",
+        "https://era-react-website.vercel.app",
+        "https://eraprintpack.com",
+        "https://www.eraprintpack.com",
         "http://localhost:5173",
         "https://localhost:5173",
         "http://192.168.178.163:5173",
