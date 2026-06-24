@@ -18,6 +18,7 @@ app.add_middleware(
     allow_origins=[
         "https://besnikrunjeva.github.io",
         "https://era-react-website.vercel.app",
+        "https://era-react-website.onrender.com",
         "https://eraprintpack.com",
         "https://www.eraprintpack.com",
         "http://localhost:5173",
@@ -27,7 +28,7 @@ app.add_middleware(
         "http://192.168.178.73:5173",
         "https://192.168.178.73:5173",
     ],
-    allow_origin_regex=r"https://.*\.vercel\.app",
+    allow_origin_regex=r"https://.*\.vercel\.app|https://.*\.onrender\.com",
     allow_methods=["POST", "OPTIONS"],
     allow_headers=["*"],
 )
