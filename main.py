@@ -1,3 +1,4 @@
+import asyncio
 import io
 import os
 import struct
@@ -8,6 +9,7 @@ from pathlib import Path
 from fastapi import FastAPI, File, Form, UploadFile, HTTPException
 from fastapi.middleware.cors import CORSMiddleware
 from fastapi.responses import Response
+from starlette.concurrency import run_in_threadpool
 from PIL import Image
 
 BASE_DIR = Path(__file__).parent
@@ -15,6 +17,9 @@ BASE_DIR = Path(__file__).parent
 # rembg looks here for its ONNX model. We ship u2netp.onnx in the repo so the
 # server never has to download it at runtime (no cold network dependency).
 os.environ.setdefault("U2NET_HOME", str(BASE_DIR / "u2net"))
+# Keep native math libs single-threaded — this instance has 0.5 CPU / 512 MB and
+# multi-threaded BLAS/onnxruntime both slows it down and spikes memory.
+os.environ.setdefault("OMP_NUM_THREADS", "1")
 
 app = FastAPI()
 
@@ -144,12 +149,30 @@ def health():
 # memory safe on Render's 512 MB instance.
 _bg_session = None
 
+# Only one removal at a time — a single inference peaks near the instance's memory
+# limit, so concurrent requests would OOM. The lock serialises them (uploads just
+# queue briefly on this low-traffic site).
+_bg_lock = asyncio.Lock()
+
+# Cap the working image so inference/compositing memory stays bounded (the model
+# resizes to 320px internally anyway; this only bounds decode + alpha compositing).
+_BG_MAX_PX = 1024
+
 
 def _get_bg_session():
     global _bg_session
     if _bg_session is None:
-        from rembg import new_session
-        _bg_session = new_session("u2netp")
+        import onnxruntime as ort
+        from rembg.session_factory import sessions_class
+        cls = next(sc for sc in sessions_class if sc.name() == "u2netp")
+        # Default SessionOptions enable a large CPU memory arena that OOM-kills the
+        # 512 MB instance. Disable it + memory pattern and pin to one thread.
+        so = ort.SessionOptions()
+        so.enable_cpu_mem_arena = False
+        so.enable_mem_pattern = False
+        so.intra_op_num_threads = 1
+        so.inter_op_num_threads = 1
+        _bg_session = cls("u2netp", so, providers=["CPUExecutionProvider"])
     return _bg_session
 
 
@@ -158,21 +181,36 @@ async def remove_bg(image: UploadFile = File(...)):
     data = await image.read()
 
     try:
-        Image.open(io.BytesIO(data)).verify()
+        img = Image.open(io.BytesIO(data))
+        img.verify()
     except Exception:
         raise HTTPException(400, "Invalid image data")
 
+    # verify() consumes the file object — reopen, normalise, and cap the size.
+    img = Image.open(io.BytesIO(data)).convert("RGBA")
+    if max(img.size) > _BG_MAX_PX:
+        img.thumbnail((_BG_MAX_PX, _BG_MAX_PX))
+
     try:
-        from rembg import remove
-        out = remove(data, session=_get_bg_session())
+        async with _bg_lock:
+            # Run the blocking inference off the event loop, one at a time.
+            out_bytes = await run_in_threadpool(_run_removal, img)
     except Exception as e:
         raise HTTPException(500, f"Background removal failed: {e}")
 
     return Response(
-        content=out,
+        content=out_bytes,
         media_type="image/png",
         headers={"Cache-Control": "no-store"},
     )
+
+
+def _run_removal(img: Image.Image) -> bytes:
+    from rembg import remove
+    out = remove(img, session=_get_bg_session())  # PIL in → RGBA PIL out
+    buf = io.BytesIO()
+    out.save(buf, "PNG")
+    return buf.getvalue()
 
 
 @app.post("/generate-ar")
