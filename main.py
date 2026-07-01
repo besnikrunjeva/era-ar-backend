@@ -1,4 +1,5 @@
 import io
+import os
 import struct
 import zlib
 import zipfile
@@ -10,6 +11,10 @@ from fastapi.responses import Response
 from PIL import Image
 
 BASE_DIR = Path(__file__).parent
+
+# rembg looks here for its ONNX model. We ship u2netp.onnx in the repo so the
+# server never has to download it at runtime (no cold network dependency).
+os.environ.setdefault("U2NET_HOME", str(BASE_DIR / "u2net"))
 
 app = FastAPI()
 
@@ -128,6 +133,46 @@ def swap_usdz_texture(usdz_path: Path, new_png: bytes) -> bytes:
 @app.get("/health")
 def health():
     return {"ok": True}
+
+
+# ── background removal ───────────────────────────────────────────────────────
+# Server-side logo background removal (rembg + the lightweight u2netp model).
+# The browser just POSTs an image and gets back a transparent PNG — works the
+# same on every device (no WebGPU/wasm), and handles complex/photo backgrounds
+# the client-side flood-fill fallback can't. Model is loaded once, lazily, so a
+# rembg/onnx problem can never take down the AR endpoint on boot. u2netp keeps
+# memory safe on Render's 512 MB instance.
+_bg_session = None
+
+
+def _get_bg_session():
+    global _bg_session
+    if _bg_session is None:
+        from rembg import new_session
+        _bg_session = new_session("u2netp")
+    return _bg_session
+
+
+@app.post("/remove-bg")
+async def remove_bg(image: UploadFile = File(...)):
+    data = await image.read()
+
+    try:
+        Image.open(io.BytesIO(data)).verify()
+    except Exception:
+        raise HTTPException(400, "Invalid image data")
+
+    try:
+        from rembg import remove
+        out = remove(data, session=_get_bg_session())
+    except Exception as e:
+        raise HTTPException(500, f"Background removal failed: {e}")
+
+    return Response(
+        content=out,
+        media_type="image/png",
+        headers={"Cache-Control": "no-store"},
+    )
 
 
 @app.post("/generate-ar")
